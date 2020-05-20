@@ -5,11 +5,11 @@ network:
   renderer: networkd
   ethernets:
     enp0s3:
-      dhcp4: yes
-    enp0s8:
       dhcp4: no
-      addresses: [192.168.1.56/30]
+      addresses: [10.0.2.0/30]
+      gateway4: 10.0.2.2
       nameservers:
-              addresses: [8.8.8.8,8.8.4.4]
-    enp0s9:
-      dhcp4: yes
+              addresses: [10.0.2.3,8.8.8.8]
+    enp0s8:
+            dhcp4: no
+
