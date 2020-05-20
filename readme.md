@@ -1,3 +1,10 @@
+# 0. Lingo
+
+* Guest machine will refer to the virtual machine
+* Host machine to your computer
+* Username is the name of the user on the guest machine, replace it in code snippets
+ 
+
 # 1. Creating the Virtual Machine
 
 **Prerequisites**
@@ -6,7 +13,9 @@ For this project we will be using VirtualBox and an Ubuntu 18.04 .iso.
 
 **VM installation**
 
-Create a new virtual machine in VirtualBox and create an 8GB .vdi (all the hard drive formats will do but the dynamically allocated .vdi uses least disk space)
+Create a new virtual machine in VirtualBox and create an 8GB .vdi (all the hard drive formats will do but the dynamically allocated .vdi uses least disk space).
+
+Verify in ``Settings->Network`` that ``Adapter 1`` is enabled and set to ``NAT``.
 
 Start the machine, choose the ubuntu .iso as start-up media and proceed to install linux on your machine.
 
@@ -86,9 +95,6 @@ network:
       gateway4: 10.0.2.2
       nameservers:
               addresses: [10.0.2.3,8.8.8.8]
-    enp0s8:
-            dhcp4: no
-
 ```
 
 We disable DHCP. To understand the how's and why's of the other parameters I recommend [this](https://forums.virtualbox.org/viewtopic.php?f=1&t=49066) page. Basically they need to be compatible with VirtualBox.
@@ -172,3 +178,174 @@ and set the default policy of refusing all incoming connections :
 ```
 sudo ufw default deny incoming
 ```
+
+We want to allow incoming connections only for the ssh service which uses port 2222.
+
+```
+sudo ufw allow 2222
+```
+
+# 5. Fail2ban
+
+We will use fail2ban for DOS protection and to protect against port scanning.
+
+```
+sudo apt install fail2ban
+```
+Fail2ban works in a very simple fashion. We create "jails" for specific behaviors we want to block. We define our first jail like this:
+
+``/etc/fail2ban/jail.d/custom.conf`` :
+>[portscanner]    
+>enabled  = true    
+>filter   = portscanner    
+>logpath  = /var/log/syslog    
+>bantime = 60    
+>findtime = 100    
+>maxretry = 1   
+
+This means fail2ban will create a jail called ``portscanner`` which will scan ``/var/log/syslog`` using the regex defined by the ``filter = portscanner`` and after ``maxretry = 1`` in the past ``findtime = 100`` seconds it will ban the IP for ``bantime = 60`` seconds.
+
+
+The filter used by the above jail is defined in   
+``/etc/fail2ban/filter.d/portscanner.conf`` :
+>[Definition]   
+>failregex = UFW BLOCK.* SRC=<HOST>   
+>ignoreregex =  
+
+The above jail will protect us against port scanning. We still have to protect against DOS. Since all incoming traffic is blocked by UFW except for port 2222 we only have to protect that one.
+
+
+``/etc/fail2ban/jail.d/custom.conf`` replace contents by this:
+
+>[DEFAULT]  
+>  
+>findtime = 3600   
+>bantime = 60   
+>maxretry = 3   
+>   
+>[sshd]   
+>enabled = true   
+>port = 2222    
+>filter = sshd   
+>bantime =  60   
+>findtime = 100   
+>maxretry = 1     
+>  
+>[portscanner]    
+>enabled  = true    
+>filter   = portscanner    
+>logpath  = /var/log/syslog    
+>bantime = 60    
+>findtime = 100    
+>maxretry = 1    
+
+## Testing our jails
+
+**Setting up a host-only network**
+
+To test out jails we will need to set up an IP for our guest machine that our host machine can find. For this purpose we will set up a "Host-Only Network".   
+In VirtualBox go to ``File->Host Network Manager`` and create a new host network. After creating it enable DHCP for it (in the same menu).
+Then turn of your VM and go to settings of your virtual machine in ``Settings->Network->Adaptator 2`` enable it and set it to host only adapter.
+
+Start your machine and type :
+
+```
+ifconfig
+```
+
+There should be a new network adapter, called ``enp0s8`` in my case. We want to add it to our ``netplan`` and be configured by DHCP.   
+Edit your netplan config to look like this    
+``/etc/netplan/*.yaml`` :
+
+```
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp0s3:
+      dhcp4: no
+      addresses: [10.0.2.0/30]
+      gateway4: 10.0.2.2
+      nameservers:
+              addresses: [10.0.2.3,8.8.8.8]
+    enp0s8:
+            dhcp4: no
+```
+and apply it with :
+
+```
+sudo netplan apply
+```
+ 
+The command ``hostname -I`` should display two IP addresses, try to ping the second one from your host machine, in my case :   
+
+```
+ping 192.168.56.101
+```
+The ping should work, if not, do not go ahead, you have problems to fix. You can now test your guest machine for port scanning and DOS.    
+For portscanning try on host :
+
+```
+sudo apt install nmap
+sudo nmap -p 192.168.56.101
+```
+Replace ``192.168.56.101`` with the IP of your guest machine.
+
+# 6. Crontab
+
+To planify scripts linux uses crontab. every user has a crontab that he can edit with ``crontab -e`` and there is a system-wide crontab in ``/etc/crontab``. We shall write the scripts and edit our crontab to run them automatically.
+I wrote two scripts :  
+``/home/username/update_and_log.sh`` :
+
+```
+#!/bin/bash
+date >> /var/log/update_script.log
+apt update -y >> /var/log/update_script.log
+apt upgrade -y >> /var/log/update_script.log
+```
+``/home/username/check_modif.sh`` :  
+
+```
+#!/bin/bash
+[ ` find /etc/crontab -mmin -1440 ` ] && echo "crontab was modified in the last 24h" | mailx -s "crontab alert" root@roguehost 
+```
+
+Make the files executable with:
+```
+chmod u+x check_modif.sh
+chmod u+x update_and_log.sh
+```
+
+We will need ``mailx`` to run the previous script
+
+```
+sudo apt-get install bsd-mailx.
+```
+
+To verify the scripts modify ``etc/crontab`` then run ``sudo ./check_modif.sh`` followed by ``sudo mailx``. You should have mail.
+
+Now we must add the scripts to the end of   
+``/etc/crontab``:  
+
+```
+@reboot root /home/jbarment/update_and_log.sh
+0 4 * * 2 root /update_and_log.sh
+0 0 * * * root /check_modif.sh
+```
+
+
+# 7. Stopping unnecessary services
+
+As all Linux distros are somewhat different you just have to figure this one out. To display all services :
+
+```
+sudo systemctl --type=service
+```
+
+You may either ask google or simply take a snapshot of your machine, disable a service with 
+
+```
+systemctl disable servicename
+```
+
+Then reboot and see if it crashes.
