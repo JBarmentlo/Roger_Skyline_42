@@ -22,7 +22,7 @@ Software to install :
 - [ ] ... Cinnamon
 - [ ] ... MATE
 - [ ] ... LXDE
-- [x] web server
+- [ ] web server
 - [ ] print server
 - [x] SSH server
 - [ ] Standard system utilities
@@ -130,4 +130,45 @@ In VirtualBox right click on the machine and go to ``Settings->Network->Advanced
 | SSH  | TCP      | 127.0.0.1 | 1234      |          | 2222       |
 
 We can choose the port we want for Host Port and the Guest Port has to match the ``sshd_config`` port. 127.0.0.1 is simply localhost.
-So the traffic we send to 127.0.0.1 at port 1234 will be redirected to the virtual machine at port 2222.
+So the traffic we send to 127.0.0.1 at port 1234 will be redirected to the virtual machine at port 2222. We can test this with :
+```
+ssh -p 1234 username@127.0.0.1
+```
+Which should return :
+```
+username@127.0.0.1: Permission denied (publickey).
+```
+
+**Authorizing access**
+
+Since SSH authentification on the machine is only possible by publickey we will have to copy an RSA key from our host machine to the guest machine. The keys that give acces to an account on a machine are stored in ``/home/username/.ssh/authorized_keys``. If you do not have a RSA key create one with ``ssh-keygen``.
+The command to copy the key:
+
+```
+ssh-copy-id -p 1234 -i ~/.ssh/id_rsa.pub username@127.0.0.1
+```
+
+Obviously the connection is refused (otherwise anyone could give themselves access to the machine). So we must :
+* edit ``sshd_config`` to authorize password authentification.
+* apply the new settings ``sudo systemctl restart ssh`` .
+* copy our key to the guest machine.
+* disable password authentification again.
+ 
+Test the setup with :
+```
+ssh -p 1234 username@127.0.0.1
+```
+
+# 4. Firewall
+
+We shall use the UFW firewall.
+
+```
+sudo apt install ufw
+```
+
+and set the default policy of refusing all incoming connections :
+
+```
+sudo ufw default deny incoming
+```
