@@ -1,7 +1,7 @@
 # 0. Lingo
 
 * Guest machine will refer to the virtual machine
-* Host machine to your computer
+* Host machine refers to your computer
 * Username is the name of the user on the guest machine, replace it in code snippets
  
 
